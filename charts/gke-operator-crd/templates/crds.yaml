@@ -21,6 +21,14 @@ spec:
         properties:
           spec:
             properties:
+              autopilot:
+                nullable: true
+                properties:
+                  allowNetAdmin:
+                    type: boolean
+                  enabled:
+                    type: boolean
+                type: object
               clusterAddons:
                 nullable: true
                 properties:

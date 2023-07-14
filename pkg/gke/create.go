@@ -3,9 +3,11 @@ package gke
 import (
 	"context"
 	"fmt"
+	"mime/multipart"
 	"strings"
 
 	gkev1 "github.com/rancher/gke-operator/pkg/apis/gke.cattle.io/v1"
+	"go.uber.org/multierr"
 	gkeapi "google.golang.org/api/container/v1"
 )
 
@@ -107,6 +109,19 @@ func newClusterCreateRequest(config *gkev1.GKEClusterConfig) *gkeapi.CreateClust
 		}
 	}
 
+	if config.Spec.Autopilot != nil {
+		if context.Spec.Autopilot.Enabled {
+			request.Cluster.Autopilot = &gkeapi.Autopilot{
+				Enabled: true,
+			}
+
+			if context.Spec.Autopilot.AllowNetAdmin {
+				request.Cluster.Autopilot.WorkloadPolicyConfig = &gkeapi.WorkloadPolicyConfig{
+					AllowNetAdmin: context.Spec.Autopilot.AllowNetAdmin,
+				}
+		}
+	}
+
 	addons := config.Spec.ClusterAddons
 	request.Cluster.AddonsConfig.HttpLoadBalancing = &gkeapi.HttpLoadBalancing{Disabled: !addons.HTTPLoadBalancing}
 	request.Cluster.AddonsConfig.HorizontalPodAutoscaling = &gkeapi.HorizontalPodAutoscaling{Disabled: !addons.HorizontalPodAutoscaling}
@@ -159,24 +174,32 @@ func newClusterCreateRequest(config *gkev1.GKEClusterConfig) *gkeapi.CreateClust
 
 // validateCreateRequest checks a config for the ability to generate a create request
 func validateCreateRequest(ctx context.Context, client *gkeapi.Service, config *gkev1.GKEClusterConfig) error {
+	var validationResult *multierr.Error
+
 	if config.Spec.ProjectID == "" {
-		return fmt.Errorf("project ID is required")
+		multierr.Append(fmt.Errorf("project ID is required"), validationResult)
 	}
 	if config.Spec.Zone == "" && config.Spec.Region == "" {
-		return fmt.Errorf("zone or region is required")
+		multierr.Append(fmt.Errorf("zone or region is required"), validationResult)
 	}
 	if config.Spec.Zone != "" && config.Spec.Region != "" {
-		return fmt.Errorf("only one of zone or region must be specified")
+		multierr.Append(fmt.Errorf("only one of zone or region must be specified"), validationResult)
 	}
 	if config.Spec.ClusterName == "" {
-		return fmt.Errorf("cluster name is required")
+		multierr.Append(fmt.Errorf("cluster name is required"), validationResult)
 	}
 
 	for _, np := range config.Spec.NodePools {
 		if np.Autoscaling != nil && np.Autoscaling.Enabled {
 			if np.Autoscaling.MinNodeCount < 1 || np.Autoscaling.MaxNodeCount < np.Autoscaling.MinNodeCount {
-				return fmt.Errorf("minNodeCount in the NodePool must be >= 1 and <= maxNodeCount")
+				multierr.Append(fmt.Errorf("minNodeCount in the NodePool must be >= 1 and <= maxNodeCount"), validationResult)
 			}
+		}
+	}
+
+	if config.Spec.Autopilot != nil {
+		if !config.Spec.Autopilot.Enabled && config.Spec.Autopilot.AllowNetAdmin {
+			multierr.Append(fmt.Errorf("autopilot needs to be enabled to allow net admin"), validationResult)
 		}
 	}
 
@@ -192,99 +215,103 @@ func validateCreateRequest(ctx context.Context, client *gkeapi.Service, config *
 
 	for _, cluster := range operation.Clusters {
 		if cluster.Name == config.Spec.ClusterName {
-			return fmt.Errorf("cannot create cluster [%s] because a cluster in GKE exists with the same name, please delete and recreate with a different name", config.Spec.ClusterName)
+			multierr.Append(fmt.Errorf("cannot create cluster [%s] because a cluster in GKE exists with the same name, please delete and recreate with a different name", config.Spec.ClusterName), validationResult)
 		}
 	}
 
 	if config.Spec.Imported {
 		// Validation from here on out is for nilable attributes, not required for imported clusters
-		return nil
+		return validationResult.ErrorOrNil()
 	}
 
 	if config.Spec.EnableKubernetesAlpha == nil {
-		return fmt.Errorf(cannotBeNilError, "enableKubernetesAlpha", config.Name)
+		multierr.Append(fmt.Errorf(cannotBeNilError, "enableKubernetesAlpha", config.Name), validationResult)
 	}
 	if config.Spec.KubernetesVersion == nil {
-		return fmt.Errorf(cannotBeNilError, "kubernetesVersion", config.Name)
+		multierr.Append(fmt.Errorf(cannotBeNilError, "kubernetesVersion", config.Name), validationResult)
 	}
 	if config.Spec.ClusterIpv4CidrBlock == nil {
-		return fmt.Errorf(cannotBeNilError, "clusterIpv4CidrBlock", config.Name)
+		multierr.Append(fmt.Errorf(cannotBeNilError, "clusterIpv4CidrBlock", config.Name), validationResult)
 	}
 	if config.Spec.ClusterAddons == nil {
-		return fmt.Errorf(cannotBeNilError, "clusterAddons", config.Name)
+		multierr.Append(fmt.Errorf(cannotBeNilError, "clusterAddons", config.Name), validationResult)
 	}
 	if config.Spec.IPAllocationPolicy == nil {
-		return fmt.Errorf(cannotBeNilError, "ipAllocationPolicy", config.Name)
+		multierr.Append(fmt.Errorf(cannotBeNilError, "ipAllocationPolicy", config.Name), validationResult)
 	}
 	if config.Spec.LoggingService == nil {
-		return fmt.Errorf(cannotBeNilError, "loggingService", config.Name)
+		multierr.Append(fmt.Errorf(cannotBeNilError, "loggingService", config.Name), validationResult)
 	}
 	if config.Spec.Network == nil {
-		return fmt.Errorf(cannotBeNilError, "network", config.Name)
+		multierr.Append(fmt.Errorf(cannotBeNilError, "network", config.Name), validationResult)
 	}
 	if config.Spec.Subnetwork == nil {
-		return fmt.Errorf(cannotBeNilError, "subnetwork", config.Name)
+		multierr.Append(fmt.Errorf(cannotBeNilError, "subnetwork", config.Name), validationResult)
 	}
 	if config.Spec.NetworkPolicyEnabled == nil {
-		return fmt.Errorf(cannotBeNilError, "networkPolicyEnabled", config.Name)
+		multipart.Append(fmt.Errorf(cannotBeNilError, "networkPolicyEnabled", config.Name), validationResult)
 	}
 	if config.Spec.PrivateClusterConfig == nil {
-		return fmt.Errorf(cannotBeNilError, "privateClusterConfig", config.Name)
+		multierr.Append(fmt.Errorf(cannotBeNilError, "privateClusterConfig", config.Name), validationResult)
 	}
 	if config.Spec.PrivateClusterConfig.EnablePrivateEndpoint && !config.Spec.PrivateClusterConfig.EnablePrivateNodes {
-		return fmt.Errorf("private endpoint requires private nodes for cluster [%s]", config.Name)
+		multierr.Append(fmt.Errorf("private endpoint requires private nodes for cluster [%s]", config.Name), validationResult)
 	}
 	if config.Spec.MasterAuthorizedNetworksConfig == nil {
-		return fmt.Errorf(cannotBeNilError, "masterAuthorizedNetworksConfig", config.Name)
+		multierr.Append(fmt.Errorf(cannotBeNilError, "masterAuthorizedNetworksConfig", config.Name), validationResult)
 	}
 	if config.Spec.MonitoringService == nil {
-		return fmt.Errorf(cannotBeNilError, "monitoringService", config.Name)
+		multierr.Append(fmt.Errorf(cannotBeNilError, "monitoringService", config.Name), validationResult)
 	}
 	if config.Spec.Locations == nil {
-		return fmt.Errorf(cannotBeNilError, "locations", config.Name)
+		multierr.Append(fmt.Errorf(cannotBeNilError, "locations", config.Name), validationResult)
 	}
 	if config.Spec.MaintenanceWindow == nil {
-		return fmt.Errorf(cannotBeNilError, "maintenanceWindow", config.Name)
+		multierr.Append(fmt.Errorf(cannotBeNilError, "maintenanceWindow", config.Name), validationResult)
 	}
 	if config.Spec.Labels == nil {
-		return fmt.Errorf(cannotBeNilError, "labels", config.Name)
+		multierr.Append(fmt.Errorf(cannotBeNilError, "labels", config.Name), validationResult)
 	}
 
 	for np := range config.Spec.NodePools {
 		if err = validateNodePoolCreateRequest(&config.Spec.NodePools[np], config); err != nil {
-			return err
+			return multierr.Append(err, validationResult)
 		}
 	}
 
-	return nil
+	return validationResult.ErrorOrNil()
 }
 
 func validateNodePoolCreateRequest(np *gkev1.GKENodePoolConfig, config *gkev1.GKEClusterConfig) error {
+	var validationResult *multierr.Error
+
 	clusterErr := cannotBeNilError
 	nodePoolErr := cannotBeNilForNodePoolError
 	clusterName := config.Spec.ClusterName
+
 	if np.Name == nil {
-		return fmt.Errorf(clusterErr, "nodePool.name", clusterName)
+		multierr.Append(fmt.Errorf(clusterErr, "nodePool.name", clusterName), validationResult)
 	}
 	if np.Version == nil {
-		return fmt.Errorf(nodePoolErr, "version", *np.Name, clusterName)
+		multierr.Append(fmt.Errorf(nodePoolErr, "version", *np.Name, clusterName), validationResult)
 	}
 	if np.Autoscaling == nil {
-		return fmt.Errorf(nodePoolErr, "autoscaling", *np.Name, clusterName)
+		multierr.Append(fmt.Errorf(nodePoolErr, "autoscaling", *np.Name, clusterName), validationResult)
 	}
 	if np.InitialNodeCount == nil {
-		return fmt.Errorf(nodePoolErr, "initialNodeCount", *np.Name, clusterName)
+		multierr.Append(fmt.Errorf(nodePoolErr, "initialNodeCount", *np.Name, clusterName), validationResult)
 	}
 	if np.MaxPodsConstraint == nil && config.Spec.IPAllocationPolicy != nil && config.Spec.IPAllocationPolicy.UseIPAliases {
-		return fmt.Errorf(nodePoolErr, "maxPodsConstraint", *np.Name, clusterName)
+		multierr.Append(fmt.Errorf(nodePoolErr, "maxPodsConstraint", *np.Name, clusterName), validationResult)
 	}
 	if np.Config == nil {
-		return fmt.Errorf(nodePoolErr, "config", *np.Name, clusterName)
+		multierr.Append(fmt.Errorf(nodePoolErr, "config", *np.Name, clusterName), validationResult)
 	}
 	if np.Management == nil {
-		return fmt.Errorf(nodePoolErr, "management", *np.Name, clusterName)
+		multierr.Append(fmt.Errorf(nodePoolErr, "management", *np.Name, clusterName), validationResult)
 	}
-	return nil
+
+	return validationResult.ErrorOrNil()
 }
 
 func newNodePoolCreateRequest(np *gkev1.GKENodePoolConfig, config *gkev1.GKEClusterConfig) (*gkeapi.CreateNodePoolRequest, error) {

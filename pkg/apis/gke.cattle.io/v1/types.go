@@ -56,6 +56,9 @@ type GKEClusterConfigSpec struct {
 	MasterAuthorizedNetworksConfig *GKEMasterAuthorizedNetworksConfig `json:"masterAuthorizedNetworks,omitempty"`
 	Locations                      []string                           `json:"locations"`
 	MaintenanceWindow              *string                            `json:"maintenanceWindow,omitempty" norman:"pointer"`
+	// Autopilot is used to enable and configure Autopilot.
+	// +optional
+	Autopilot *Autopilot `json:"autopilot,omitempty"`
 }
 
 type GKEIPAllocationPolicy struct {
@@ -134,4 +137,14 @@ type GKECidrBlock struct {
 type GKENodePoolManagement struct {
 	AutoRepair  bool `json:"autoRepair,omitempty"`
 	AutoUpgrade bool `json:"autoUpgrade,omitempty"`
+}
+
+// Autopilot is used to enable and configure GKE autopilot.
+type Autopilot struct {
+	// Enabled indicates if autopilot should be enabled for the cluster.
+	// +required
+	Enabled bool `json:"enabled"`
+	// AllowNetAdmin Iiftrue, workloads can use NET_ADMIN capability.
+	// +optional
+	AllowNetAdmin bool `json:"allowNetAdmin,omitempty"`
 }
