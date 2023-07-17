@@ -3,7 +3,6 @@ package gke
 import (
 	"context"
 	"fmt"
-	"mime/multipart"
 	"strings"
 
 	gkev1 "github.com/rancher/gke-operator/pkg/apis/gke.cattle.io/v1"
@@ -110,15 +109,15 @@ func newClusterCreateRequest(config *gkev1.GKEClusterConfig) *gkeapi.CreateClust
 	}
 
 	if config.Spec.Autopilot != nil {
-		if context.Spec.Autopilot.Enabled {
+		if config.Spec.Autopilot.Enabled {
 			request.Cluster.Autopilot = &gkeapi.Autopilot{
-				Enabled: true,
+				Enabled: config.Spec.Autopilot.Enabled,
 			}
-
-			if context.Spec.Autopilot.AllowNetAdmin {
+			if config.Spec.Autopilot.AllowNetAdmin {
 				request.Cluster.Autopilot.WorkloadPolicyConfig = &gkeapi.WorkloadPolicyConfig{
-					AllowNetAdmin: context.Spec.Autopilot.AllowNetAdmin,
+					AllowNetAdmin: config.Spec.Autopilot.AllowNetAdmin,
 				}
+			}
 		}
 	}
 
@@ -249,7 +248,7 @@ func validateCreateRequest(ctx context.Context, client *gkeapi.Service, config *
 		multierr.Append(fmt.Errorf(cannotBeNilError, "subnetwork", config.Name), validationResult)
 	}
 	if config.Spec.NetworkPolicyEnabled == nil {
-		multipart.Append(fmt.Errorf(cannotBeNilError, "networkPolicyEnabled", config.Name), validationResult)
+		multierr.Append(fmt.Errorf(cannotBeNilError, "networkPolicyEnabled", config.Name), validationResult)
 	}
 	if config.Spec.PrivateClusterConfig == nil {
 		multierr.Append(fmt.Errorf(cannotBeNilError, "privateClusterConfig", config.Name), validationResult)
